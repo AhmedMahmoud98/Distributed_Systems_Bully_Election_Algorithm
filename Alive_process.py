@@ -8,7 +8,7 @@ from utils import *
 from datetime import datetime
 from dateutil.relativedelta import relativedelta
 
-def Alive_process(isLeader,MachinesIPs):
+def Alive_process(isLeader,MachinesIPs,PUBSocket):
     # Configure myself as subscriber all machines
     ipPort = myIp + ":" + machineCommPort
     MyPID = get_PID()
@@ -21,7 +21,7 @@ def Alive_process(isLeader,MachinesIPs):
             #setup publisher communication
             pubSocket, pubContext = configure_port(ipPort, zmq.PUB, 'bind')
             # I'm Alive Msg that will be sent periodically
-            msg = {'id': MsgDetails.LEADER_MEMBER_ALIVE, 'msg': "I'm Alive", 'ip': myIp,'PID'=MyPID,'MachineType'=MachineType.Leader}
+            msg = {'id': MsgDetails.LEADER_MEMBER_ALIVE, 'msg': "I'm Alive", 'ip': myIp,'PID':MyPID,'MachineType':MachineType.Leader}
             
             # Periodically 1 sec
             pubSocket.send(pickle.dumps(msg))
@@ -39,8 +39,10 @@ def Alive_process(isLeader,MachinesIPs):
                 #no message recieved . so send messages command start election
                 for i in range(machinesNumber-1):
                     msg = {'id': MsgDetails.START_ELECITION, 'msg': "start election command", 'ip': myIp}
-                    # Periodically 1 sec
-                    pubSocket.send(pickle.dumps(msg))
+                    # not the same socket to send to another sub sockets except alive sub socket
+                    PUBSocket.send(pickle.dumps(msg))
+                    
                 #TODO if received alive msg with pid not equal to leader pid
-                # send to leader that new leader is elected    
+                # send to leader that new leader is elected
+                    
 
