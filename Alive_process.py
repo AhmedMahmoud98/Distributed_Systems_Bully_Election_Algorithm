@@ -22,7 +22,7 @@ def Alive_process(isLeader,MachinesIPs):
             pubSocket, pubContext = configure_port(ipPort, zmq.PUB, 'bind')
             # I'm Alive Msg that will be sent periodically
             msg = {'id': MsgDetails.LEADER_MEMBER_ALIVE, 'msg': "I'm Alive", 'ip': myIp,'PID'=MyPID,'MachineType'=MachineType.Leader}
-
+            
             # Periodically 1 sec
             pubSocket.send(pickle.dumps(msg))
             time.sleep(1)

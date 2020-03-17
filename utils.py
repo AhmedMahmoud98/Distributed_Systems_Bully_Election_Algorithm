@@ -55,7 +55,7 @@ class MsgDetails(enum.Enum):
     ELECTION = 3
     OK = 4
     NOT_LEADER = 5 #msg from members to leader to inform 
-    #him that new leader was elected
+    #him that new leader was elected #TODO at i'm alive process.
     PID_MSG = 6
     NEW_LEADER = 7
 
