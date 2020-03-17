@@ -14,7 +14,7 @@ def configure_port(ipPort, portType, connectionType, openTimeOut=False):
     if(openTimeOut):
         socket.setsockopt(zmq.LINGER,      0)
         socket.setsockopt(zmq.AFFINITY,    1)
-        socket.setsockopt(zmq.RCVTIMEO, 300)
+        socket.setsockopt(zmq.RCVTIMEO, 700)
     if(connectionType == "connect"):
         socket.connect("tcp://" + ipPort)
     else:
@@ -30,7 +30,7 @@ def configure_multiple_ports(IPs, ports, portType, openTimeOut=False):
     if(openTimeOut):
         socket.setsockopt(zmq.LINGER,      0)
         socket.setsockopt(zmq.AFFINITY,    1)
-        socket.setsockopt(zmq.RCVTIMEO,  300)
+        socket.setsockopt(zmq.RCVTIMEO,  700)
     if (isinstance(IPs, list)):
         for ip in IPs:
             socket.connect("tcp://" + ip + ":" + ports)
@@ -58,7 +58,8 @@ class MsgDetails(enum.Enum):
     NOT_LEADER = 5 #msg from members to leader to inform 
     #him that new leader was elected #TODO at i'm alive process.
     PID_MSG = 6
-    NEW_LEADER = 7
+    PID_LIST = 7
+    NEW_LEADER = 8
 
 
 class MachineType(enum.Enum):
