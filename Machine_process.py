@@ -68,7 +68,7 @@ def send_get_PIDs(myIp,Machines,MachinesPID,pubSocket,subSocket):
         #send my pid 
         time.sleep(2)
         #TODO remove when test on different machines
-        msg = {'id': MsgDetails.PID_MSG, 'PID': MyPID,'PORT':TransferPort}
+        msg = {'id': MsgDetails.PID_MSG, 'PID': MyPID,'ip':myIp,'PORT':TransferPort}
         print("msg to send to other machines{}".format(msg))
         pubSocket.send(pickle.dumps(msg))
         print("pid is send")
@@ -105,7 +105,7 @@ def configMachinePorts(myIp,block,subTopic):
         subsocket.setsockopt_string(zmq.SUBSCRIBE, "")
     subsocket.setsockopt_string(zmq.SUBSCRIBE,"Broadcast")
     if(block == True):
-        subsocket.setsockopt(zmq.RCVTIMEO, 3000)
+        subsocket.setsockopt(zmq.RCVTIMEO, 5000)
         subsocket.setsockopt(zmq.LINGER,      0)
         subsocket.setsockopt(zmq.AFFINITY,    1)
         
@@ -135,8 +135,8 @@ def start_election(MachinesPID,PUBSocket,SUBSocket,myIp,p):
     #if first machine then 3 ok only at most 
     if(MyPID == MachinesPID[0]):
         #send election at first then receive
-        #time.sleep(2)
-        for i in range(1,4):
+        time.sleep(2)
+        for i in range(1,(len(MachinesPID)-index)):
             if(index+i >= len(MachinesPID)):
                 break
             msg = {'id': MsgDetails.ELECTION, 'msg': "election command",'PID':MyPID,'topicfilter' : MachinesPID[index+i]}
@@ -177,8 +177,8 @@ def start_election(MachinesPID,PUBSocket,SUBSocket,myIp,p):
                         
                 except:
                     break
-        #time.sleep(2)
-        for i in range(1,4) :
+        time.sleep(2)
+        for i in range(1,(len(MachinesPID)-index)):
             if(index+i >= len(MachinesPID)):
                 break
             msg = {'id': MsgDetails.ELECTION, 'msg': "election command",'PID':MyPID,'topicfilter' : MachinesPID[index+i]}
@@ -192,7 +192,7 @@ def start_election(MachinesPID,PUBSocket,SUBSocket,myIp,p):
                     [topic,rmsg] = SUBSocket.recv_multipart()
                     receivedMessage = pickle.loads(rmsg)
                     print("after received:{}".format(receivedMessage))
-                    if(receivedMessage['topicfilter'] == MyPID and receivedMessage['id']==MsgDetails.OK):
+                    if(receivedMessage['topicfilter'] == MyPID and receivedMessage['id']==MsgDetails.OK ):
                         isleader=False
                         trueMsg = True
                     

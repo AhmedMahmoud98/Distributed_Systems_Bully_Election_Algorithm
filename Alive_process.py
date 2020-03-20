@@ -95,6 +95,3 @@ def Alive_process(MyPID,checkElection,isLeader,MachinesIPs,ManyLeadersCheck,Fake
 
                 #TODO if received alive msg with pid not equal to leader pid
                 # send to leader that new leader is elected
-
-                    
-
