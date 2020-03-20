@@ -8,18 +8,19 @@ from utils import *
 from datetime import datetime
 from dateutil.relativedelta import relativedelta
 
-def Alive_process(checkElection,isLeader,MachinesIPs):
+def Alive_process(MyPID,checkElection,isLeader,MachinesIPs,ManyLeadersCheck,FakeLeaderPID,LeaderPID):
     
     myIp = get_ip()
     port = 30000
     # Configure myself as subscriber all machines
     ipPort = myIp + ":" + str(port)
-    MyPID = get_PID()
+    MyPID = MyPID
     subsocket = None
     subcontext = None
     pubSocket = None
     pubContext = None
     print("check election :",checkElection)
+    print("leaderPID:",LeaderPID.value)
     while (checkElection.value == 0) :
         #leader send periodically i'm alive msg to others machines
         if(isLeader == True):
@@ -46,7 +47,7 @@ def Alive_process(checkElection,isLeader,MachinesIPs):
 
 
             # I'm Alive Msg that will be sent periodically
-            msg = {'id': MsgDetails.LEADER_MEMBER_ALIVE, 'msg': "I'm Alive", 'ip': myIp,'PID':MyPID,'MachineType':MachineType.Leader}
+            msg = {'id': MsgDetails.LEADER_MEMBER_ALIVE, 'msg': "I'm Alive",'PID':MyPID,'MachineType':MachineType.Leader}
             
             # Periodically 1 sec
             pubSocket.send(pickle.dumps(msg))
@@ -64,7 +65,7 @@ def Alive_process(checkElection,isLeader,MachinesIPs):
                 subSocket, subContext = configure_multiple_ports(MachinesIPs,
                                                         range(30000,30010), zmq.SUB,True)
             LeaderAlive = False
-            for i in range(5):
+            for i in range(3):
                 try:
                     receivedMessage = None
                     #receive alive msg from leader
@@ -73,7 +74,10 @@ def Alive_process(checkElection,isLeader,MachinesIPs):
                     if(receivedMessage != None):
                         LeaderAlive = True
                         print("Member recv:{}".format(receivedMessage))
-                        
+                        if(LeaderPID.value != receivedMessage['PID'] ):
+                            ManyLeadersCheck.value = 1
+                            FakeLeaderPID.value = receivedMessage['PID']
+                            checkElection.value = 1       
                 except:pass
                 finally:
                     time.sleep(1)

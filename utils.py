@@ -75,6 +75,5 @@ machinesNumber = 3
 machineCommPort = "5556"
 MachinesIPs = [get_ip(),get_ip(),get_ip()]
 MachinesPID = [get_PID()]
-LeaderPID = 0  
-#to be set when leader send alive msg
+
 
