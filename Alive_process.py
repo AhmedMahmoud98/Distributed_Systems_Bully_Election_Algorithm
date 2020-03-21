@@ -11,7 +11,7 @@ from dateutil.relativedelta import relativedelta
 def Alive_process(MyPID,checkElection,isLeader,MachinesIPs,ManyLeadersCheck,FakeLeaderPID,LeaderPID):
     
     myIp = get_ip()
-    port = 30000
+    port = 30010
     # Configure myself as subscriber all machines
     ipPort = myIp + ":" + str(port)
     MyPID = MyPID
@@ -34,13 +34,13 @@ def Alive_process(MyPID,checkElection,isLeader,MachinesIPs,ManyLeadersCheck,Fake
                 
                 try:
                     #setup publisher communication
-                    pubSocket, pubContext = configure_port(ipPort, zmq.PUB, 'bind')
+                    pubSocket, pubContext = configure_port(ipPort, zmq.PUSH, 'bind')
                     
                 except:
                     print("except")
                     port +=1
                     ipPort = myIp + ":" + str(port)
-                    pubSocket, pubContext = configure_port(ipPort, zmq.PUB, 'bind')
+                    pubSocket, pubContext = configure_port(ipPort, zmq.PUSH, 'bind')
                 #fe moshkla any lma ab2a member we b3den ab2a leader f hwa msh hyzbot 3la el machine el w7da we ana bgrb 3lshan 
                 # hyb2a pub socket ana kont wa5do fe el process ely at3mlha terminate bl talihyl3li an el socket 3la ghazi ana mta5d .
                 # f momkn a3ml random ports kda ll mwdo3 dh ybdl fehom lw 7sl el error dh we fe el sub y3ml connect 3lehom kolhom     
@@ -63,9 +63,9 @@ def Alive_process(MyPID,checkElection,isLeader,MachinesIPs,ManyLeadersCheck,Fake
             if(subsocket == None and subcontext == None):
                 #setup subscriber communication
                 subSocket, subContext = configure_multiple_ports(MachinesIPs,
-                                                        range(30000,30010), zmq.SUB,True)
+                                                        range(30010,30020), zmq.PULL,True)
             LeaderAlive = False
-            for i in range(3):
+            for i in range(machinesNumber):
                 try:
                     receivedMessage = None
                     #receive alive msg from leader

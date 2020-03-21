@@ -131,11 +131,15 @@ def start_election(MachinesPID,PUBSocket,SUBSocket,myIp,p):
     index = MachinesPID.index(MyPID)
     print("{} of pid : {}".format(index,MyPID))
     isleader = True
+    # if no machines in the systems except me
+    noSystem = False
+
     #if my machine is not the first one then i will recv at most 6 msgs 3 OK and 3 ELection 
     #if first machine then 3 ok only at most 
     if(MyPID == MachinesPID[0]):
         #send election at first then receive
         time.sleep(2)
+        receivedNumber=0
         for i in range(1,(len(MachinesPID)-index)):
             if(index+i >= len(MachinesPID)):
                 break
@@ -154,11 +158,14 @@ def start_election(MachinesPID,PUBSocket,SUBSocket,myIp,p):
                     if(receivedMessage['topicfilter'] == MyPID and receivedMessage['id']==MsgDetails.OK):
                         isleader=False
                         trueMsg = True
-                    
-                    
+                        receivedNumber+=1                    
                 except:break        
-            
+        if(receivedNumber < 1):
+            print("no system")
+            noSystem = True        
+
     else:
+        receivedNumber = 0
         #not first machine
         #receive Election at first from the lower machines
         for i in range(index):
@@ -174,10 +181,11 @@ def start_election(MachinesPID,PUBSocket,SUBSocket,myIp,p):
                         print("send msg: {}".format(msg))
                         trueMsg = True
                         PUBSocket.send_multipart([str(receivedMessage['PID']).encode(),pickle.dumps(msg)])
-                        
+                        receivedNumber+=1
                 except:
                     break
         time.sleep(2)
+        
         for i in range(1,(len(MachinesPID)-index)):
             if(index+i >= len(MachinesPID)):
                 break
@@ -195,9 +203,12 @@ def start_election(MachinesPID,PUBSocket,SUBSocket,myIp,p):
                     if(receivedMessage['topicfilter'] == MyPID and receivedMessage['id']==MsgDetails.OK ):
                         isleader=False
                         trueMsg = True
+                        receivedNumber+=1
                     
                 except:break        
-
+        if(receivedNumber < 1):
+            print("no system")
+            noSystem = True
     checkElection.value = 0
     #if count equal 0 then this machine become the leader.
     if(isleader == True):
@@ -215,7 +226,7 @@ def start_election(MachinesPID,PUBSocket,SUBSocket,myIp,p):
         Machines[MyPID].isLeader=False
 
     
-    return isleader
+    return isleader,noSystem
     
 
 def Machine_process(MachinesPID,Machines,MachinesIPs,myIp):
@@ -232,10 +243,12 @@ def Machine_process(MachinesPID,Machines,MachinesIPs,myIp):
     print(MachinesPID)
     print("\n\n")
     p = None
-    isleader = start_election(MachinesPID,PUB_socket,sub_socket,myIp,p)
+    noSystem = False
+    isleader,noSystem = start_election(MachinesPID,PUB_socket,sub_socket,myIp,p)
     
     
-    while(True):
+    while(not noSystem):
+        noSystem = False
         #msgs received from machine and its behaviour
         print("in machine process super loop new leader:check election:{} checkMany leaders :{}".format(checkElection.value,ManyLeadersCheck.value))
         if(ManyLeadersCheck.value == 1 and checkElection.value == 1):
@@ -265,9 +278,9 @@ def Machine_process(MachinesPID,Machines,MachinesIPs,myIp):
 
             if(receivedMessage['id'] == MsgDetails.START_ELECITION):
                 #wait second then start to send election msgs to elect new leader
-                checkElection.value = 0
+                
                 time.sleep(2)
-                start_election(MachinesPID,PUB_socket,sub_socket,myIp,p)
+                isleader , noSystem= start_election(MachinesPID,PUB_socket,sub_socket,myIp,p)
 
             elif(receivedMessage['id'] == MsgDetails.NEW_LEADER or receivedMessage['id'] == MsgDetails.NOT_LEADER):
                 #new leader is elected to the system 

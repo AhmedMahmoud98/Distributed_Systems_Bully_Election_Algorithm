@@ -71,9 +71,9 @@ class MachineType(enum.Enum):
     Member = 2
 
 # Constants #
-machinesNumber = 3
+machinesNumber = 4
 machineCommPort = "5556"
-MachinesIPs = [get_ip(),get_ip(),get_ip()]
+MachinesIPs = [get_ip(),get_ip(),get_ip(),get_ip()]
 MachinesPID = [get_PID()]
 
 
