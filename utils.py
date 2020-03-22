@@ -25,6 +25,10 @@ def configure_port(ipPort, portType, connectionType, openTimeOut = False,
         socket.bind("tcp://" + ipPort)
     return socket, context
 
+def setTimeOut(socket, Time):
+    socket.setsockopt(zmq.RCVTIMEO, Time)
+    socket.setsockopt(zmq.LINGER,      0)
+    socket.setsockopt(zmq.AFFINITY,    1)
 
 def configure_multiple_ports(IPs, port, portType, openTimeOut = False, 
                                 Time = 0, subTopic = False, Topics = []):
@@ -62,7 +66,11 @@ class MsgDetails(enum.Enum):
     START_MSG = 6
     IPs_LIST = 7
     NEW_LEADER = 8
-    NETWORK_READY = 9
+    REAL_LEADER = 9
+    LEADER_AMBIGUITY = 10
+    NETWORK_READY = 11
+    PAUSE = 12
+    DUMMY = 13
 
 
 # Constants #
@@ -72,3 +80,5 @@ AlivePort = "20000"
 StartingMachineIP = "192.168.1.9"
 MachinesIPs = ["192.168.1.9", "192.168.1.10", "192.168.1.11", "192.168.1.12"]
 MachinesIDs = [ID for ID in range(NumOfMachines)]
+
+

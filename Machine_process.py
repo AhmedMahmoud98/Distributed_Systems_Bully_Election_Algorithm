@@ -1,11 +1,14 @@
 import os
 import sys
 import zmq
+import time
 from utils import *
 from Machine import *
-import multiprocessing
 from Alive_process import *
 from contextlib import contextmanager
+from multiprocessing import Process, Value, Lock
+from datetime import datetime
+from dateutil.relativedelta import relativedelta
 
 
 MyID = int(sys.argv[1]) 
@@ -20,25 +23,22 @@ pubContext = None
 subSocket = None
 subContext = None
 
-# shared memory manger
-manager = multiprocessing.Manager()
-
 # boolen to know if the distrubted system in election function or not 
 # to stop the alive process
-ElectionMode = manager.Value('i',1) #in election ,no leader 1 mean true
-ElectionModeLock = multiprocessing.Lock()
+ElectionMode = Value('i',1) #in election ,no leader 1 mean true
+ElectionModeLock = Lock()
 
 # Check for fake leaders
-ManyLeadersMode = manager.Value('i',0)
-ManyLeadersModeLock = multiprocessing.Lock()
+LeaderAmbiguityMode = Value('i',0)
+LeaderAmbiguityModeLock = Lock()
 
 # Fake leader pid is pid of the leader which  wake up after new leader is elected
-FakeLeaderID = manager.Value('i',0)
-FakeLeaderLock = multiprocessing.Lock()
+PauseMode = Value('i',0)
+PauseModeLock = Lock()
 
 # Current system leader pid
-LeaderID  = manager.Value('i',0)
-LeaderIDLock = multiprocessing.Lock()
+LeaderID  = Value('i',0)
+LeaderIDLock = Lock()
 
 def InitMachines():
     for ID, IP in zip(MachinesIDs, MachinesIPs):
@@ -93,6 +93,8 @@ def ConfigPubSubSockets(IsBlocked, IsTopic, Time = 0):
     if(IsTopic):
         # The Kind of Messages that I want only to receive
         Topics.append("Broadcast")  # Receive General Msgs
+        if(MyID == 0):
+            Topics.append("LeaderAmbiguity")
 
         MachinesIDs = [Machine.ID for Machine in Machines.values()]
         MachinesIDs.sort()
@@ -104,6 +106,8 @@ def ConfigPubSubSockets(IsBlocked, IsTopic, Time = 0):
                 Topics.append(str(MyID) + "OK") 
                 # Receive The Msg that Tell me that I amn't the Leader any more
                 Topics.append(str(MyID) + "NotLeader") 
+                # Receive Msg To Pause My Machine (For Testing)
+                Topics.append(str(MyID) + "Pause")
             else:
                 break
         
@@ -125,7 +129,7 @@ def StartElection():
     IsLeader = True
 
     # TODO: Ask How to remove that sleep
-    time.sleep(NumOfMachines - 1 - MyID)
+    time.sleep((NumOfMachines - 1 - MyID) * 0.01)
 
     # Send Election Msg to All Machines with Greater ID
     ElectionMsg = {"MsgID": MsgDetails.ELECTION, "ID": MyID}
@@ -134,14 +138,17 @@ def StartElection():
 
     try:
         while(True):
+            setTimeOut(subSocket, 2000)
             Topic, receivedMessage = subSocket.recv_multipart()
             receivedMessage = pickle.loads(receivedMessage)
             if(receivedMessage["MsgID"] == MsgDetails.OK):
                 IsLeader = False
+                print("RCV OK Msg From  ", receivedMessage["ID"])   
             if(receivedMessage["MsgID"] == MsgDetails.ELECTION):
                 OkMsg = {"MsgID": MsgDetails.OK, "ID": MyID}
                 Topic =  (str(receivedMessage["ID"]) + "OK").encode()
-                pubSocket.send_multipart([Topic ,pickle.dumps(OkMsg)])              
+                pubSocket.send_multipart([Topic ,pickle.dumps(OkMsg)])
+                print("RCV Election Msg From  ", receivedMessage["ID"])              
     except:
         pass              
 
@@ -150,14 +157,12 @@ def StartElection():
         LeaderIDLock.acquire()
         LeaderID.value = MyID
         LeaderIDLock.release()
-        Machines[MyID].IsLeader = True
         # Tell the Other Machines that I'm The New Leader
         LeaderMsg = {'MsgID': MsgDetails.NEW_LEADER, 'ID': MyID}
         Topic = "Broadcast".encode()
         pubSocket.send_multipart([Topic, pickle.dumps(LeaderMsg)]) 
     else:
         # Declare Myself as a Normal Member 
-        Machines[MyID].IsLeader = False
         # Receive The New Leader Msg
         Topic, receivedMessage = subSocket.recv_multipart()
         receivedMessage = pickle.loads(receivedMessage)
@@ -191,52 +196,96 @@ def Machine_process():
     pubContext.destroy()
     
     ################### Start Election at the Beginning to choose the leader ###############
-    ConfigPubSubSockets(IsBlocked = True, IsTopic = True, Time = 5000)
+    ConfigPubSubSockets(IsBlocked = True, IsTopic = True, Time = 2000)
     StartElection()
 
+    # Pause Mode is Used For Testing
+    PauseModeLock.acquire()
+    PauseMode.value = 0
+    PauseModeLock.release()
     # Open Alive Process To Start The Hearebeat in the System
-    AliveProcess = multiprocessing.Process(target = Alive_process,
+    AliveProcess = Process(target = Alive_process,
                    args = (MyID, MyIP, ElectionMode, ElectionModeLock, 
-                           Machines[MyID].IsLeader, ManyLeadersMode, 
-                           ManyLeadersModeLock, FakeLeaderID, FakeLeaderLock,  
+                           LeaderAmbiguityMode, LeaderAmbiguityModeLock, 
+                           PauseMode, PauseModeLock,  
                            LeaderID, LeaderIDLock ))
     AliveProcess.start()  # ...and run!
 
     # End The TimeOut and make Receive Blocked
-    subSocket.setsockopt(zmq.RCVTIMEO,  500)
-    try:
-        while(True):
-            Topic, receivedMessage = subSocket.recv_multipart()
-            receivedMessage = pickle.loads(receivedMessage)
+    while(True):
+        receivedMessage = None
+        try:
+            while(True):
+                setTimeOut(subSocket, 500)
+                Topic, receivedMessage = subSocket.recv_multipart()
+                receivedMessage = pickle.loads(receivedMessage)
 
-            if(receivedMessage['MsgID'] == MsgDetails.START_ELECITION):
-                ElectionModeLock.acquire()
-                ElectionMode.value = 1
-                ElectionModeLock.release()
-                StartElection()
+                # No Machine Send I'm Alive Msg, Let's Start Election
+                if(receivedMessage['MsgID'] == MsgDetails.START_ELECITION):
+                    ElectionModeLock.acquire()
+                    ElectionMode.value = 1
+                    ElectionModeLock.release()
+                    StartElection()
+                    print("New Leader Is " , LeaderID.value)
 
-            elif(receivedMessage['MsgID'] == MsgDetails.NOT_LEADER):
-                Machines[MyID].IsLeader = False
-                LeaderIDLock.acquire()
-                LeaderID.value = receivedMessage['LeaderID']
-                LeaderIDLock.release()
-    except:
-        # No Alive Msg is received from leader 
-        # Then send Msg to all Machines to start new election
-        if(ElectionMode.value == 1):
+                # Machine 0 Send Me The Real Leader ID as 
+                # there were Ambiguity In the System
+                elif(receivedMessage['MsgID'] == MsgDetails.REAL_LEADER):
+                    print("Now I Know The Real Leader And Its ID is ", receivedMessage['LeaderID'])
+                    LeaderIDLock.acquire()
+                    LeaderID.value = receivedMessage['LeaderID']
+                    LeaderIDLock.release()
+                    LeaderAmbiguityModeLock.acquire()
+                    LeaderAmbiguityMode.value = 0
+                    LeaderAmbiguityModeLock.release()
+
+    
+                # Pause Msg (For Testing)
+                elif(receivedMessage['MsgID'] == MsgDetails.PAUSE):
+                    PauseModeLock.acquire()
+                    PauseMode.value = 1
+                    PauseModeLock.release()
+                    TimeBefore = datetime.now()
+                    TimeIn = datetime.now()
+                    while(relativedelta(TimeIn, TimeBefore).seconds < 15):
+                        try:
+                            Topic, receivedMessage = subSocket.recv_multipart()
+                        except:
+                            TimeIn = datetime.now()
+                            pass
+                    PauseModeLock.acquire()
+                    PauseMode.value = 0
+                    PauseModeLock.release()
+
+
+                # There's a Leader Ambiguity in the system
+                # May Be The Old Leader Wake up Again So All Machines sent a Leader Ambiguity Msg
+                # To Machine 0 OR a Normal Member Wake Up Again and Receive a Msg from a 
+                # Leader that It think It isn't the Real Leader So It sent a Msg to Machine 0
+                ########### This Msg is Sent Only To Machine 0 ############
+                elif(receivedMessage['MsgID'] == MsgDetails.LEADER_AMBIGUITY):
+                    RealLeaderMsg = {"MsgID": MsgDetails.REAL_LEADER, 'LeaderID': LeaderID.value}
+                    Topic = "Broadcast".encode()
+                    pubSocket.send_multipart([Topic ,pickle.dumps(RealLeaderMsg)])
+                    LeaderAmbiguityModeLock.acquire()
+                    LeaderAmbiguityMode.value = 0
+                    LeaderAmbiguityModeLock.release()
+
+        except:
+            # No Alive Msg is received from leader 
+            # Then send Msg to all Machines to start new election
+            if(ElectionMode.value == 1):
                 StartElectionMsg = {'MsgID': MsgDetails.START_ELECITION }
                 Topic = "Broadcast".encode()
                 pubSocket.send_multipart([Topic, pickle.dumps(StartElectionMsg)])
                 StartElection()
-                
-        # The Old Leader is now Alive again, tell him that 
-        # He isn't the Leader anymore
-        elif(ManyLeadersMode.value == 1):
-                NotLeaderMsg = {'MsgID': MsgDetails.NOT_LEADER, 'LeaderID': LeaderID.value}
-                Topic = str(FakeLeaderID).encode()
-                pubSocket.send_multipart([Topic ,pickle.dumps(NotLeaderMsg)])
-                ManyLeadersModeLock.acquire()
-                ManyLeadersMode.value = 0
-                ManyLeadersModeLock.release()
-                
+                print("New Leader Is " , LeaderID.value)
+                    
+            # A Machine Receive a Msg From a another Machine 
+            # which id differnt from The Leader It thought
+            elif(LeaderAmbiguityMode.value == 1):
+                LeaderAmbiguityMsg = {'MsgID': MsgDetails.LEADER_AMBIGUITY }
+                Topic = "LeaderAmbiguity".encode()
+                pubSocket.send_multipart([Topic, pickle.dumps(LeaderAmbiguityMsg)])
+      
 Machine_process()
