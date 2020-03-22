@@ -1,7 +1,6 @@
 class Machine:
-    def __init__(self, ip,PID, Port,isLeader=False, isAlive=False):
-        self.ip = ip
-        self.PID = PID
-        self.Port = Port
-        self.isAlive = isAlive
-        self.isLeader = isLeader
+    def __init__(self, IP, ID, IsLeader = False, IsAlive = True):
+        self.IP = IP
+        self.ID = ID
+        self.IsAlive = IsAlive
+        self.IsLeader = IsLeader

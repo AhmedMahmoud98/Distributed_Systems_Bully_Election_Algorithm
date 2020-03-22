@@ -1,307 +1,242 @@
-import pprint
-import sys
-import time
-import zmq
-import signal
-from contextlib import contextmanager
-from utils import *
-from datetime import datetime
-from dateutil.relativedelta import relativedelta
 import os
+import sys
+import zmq
+from utils import *
 from Machine import *
 import multiprocessing
 from Alive_process import *
+from contextlib import contextmanager
 
-TransferPort=int(sys.argv[1]) #pub port number 10000
-#sub port number will be same number +10000
-#then if machine found that this port number is 10000 then it know that it's first machine then it start to communicate with ports 20001,20002,...20000N
 
-MyPID=os.getpid()
-MyIP=get_ip()
+MyID = int(sys.argv[1]) 
+#MyIP = get_ip()
+MyIP = sys.argv[2] #TODO: it will be removed and uncomment the above line (Testing)
+
+# Key is Machine ID and value is Machine object
 Machines = {}
+
 pubSocket = None
 pubContext = None
-subsocket = None
+subSocket = None
+subContext = None
 
-#shared memory manger
+# shared memory manger
 manager = multiprocessing.Manager()
 
-#boolen to know if the distrubted system in election function or not to stop the alive process
-checkElection = manager.Value('i',1) #in election ,no leader 1 mean true
+# boolen to know if the distrubted system in election function or not 
+# to stop the alive process
+ElectionMode = manager.Value('i',1) #in election ,no leader 1 mean true
+ElectionModeLock = multiprocessing.Lock()
 
-#fake leader pid is pid of the leader which  wake up after new leader is elected
-FakeLeaderPID = manager.Value('i',0)
+# Check for fake leaders
+ManyLeadersMode = manager.Value('i',0)
+ManyLeadersModeLock = multiprocessing.Lock()
 
-#check for fake leaders
-ManyLeadersCheck = manager.Value('i',0)
+# Fake leader pid is pid of the leader which  wake up after new leader is elected
+FakeLeaderID = manager.Value('i',0)
+FakeLeaderLock = multiprocessing.Lock()
 
-#current system leader pid
-LeaderPID  = manager.Value('i',0)
+# Current system leader pid
+LeaderID  = manager.Value('i',0)
+LeaderIDLock = multiprocessing.Lock()
 
-#key is machine process pid and value is machine object
-Machines[MyPID]=Machine(MyIP,MyPID,TransferPort,True,False)
+def InitMachines():
+    for ID, IP in zip(MachinesIDs, MachinesIPs):
+        Machines[ID] = Machine(IP, ID)
+
+def SendStartMsg():
+    # Send My ID & IP to the starting Machine
+    msg = {'MsgId': MsgDetails.START_MSG, 'ID': MyID}
+    pubSocket.send(pickle.dumps(msg))
+    print("Send starting MSG")
+
+def RcvStartMsgs():
+    # Receive msg from other machines and create object to each one
+    for i in range(1 , NumOfMachines):
+        receivedMessage = pickle.loads(subSocket.recv())
+        if(receivedMessage['MsgId'] == MsgDetails.START_MSG):
+            ID = receivedMessage["ID"]
+            print("Recieve start MSG from Machine#" + str(ID))
 
 
-def send_get_PIDs(myIp,Machines,MachinesPID,pubSocket,subSocket):
-    if(TransferPort == 10000):
-        #first machine then receive whole pids of other machines and store in machinespid
-        for i in range(machinesNumber-1):
-            print("before receive pid")
-            #receive alive msg from leader    
-            receivedMessage = pickle.loads(subSocket.recv())
-            print("after receive pid msg :{}".format(receivedMessage))
-            #receive msg from other machines and create objects 
-            #port in object is pub socket port
-            if(receivedMessage['id'] == MsgDetails.PID_MSG and receivedMessage['PID'] not in MachinesPID):
-                PID=receivedMessage['PID']
-                MachinesPID.append(PID)
-                Machines[PID]= Machine(receivedMessage['ip'],PID,receivedMessage['PORT'],True,False)
+def SendNetworkReady():
+    # Send Network Ready to others Machines
+    msg = {'id': MsgDetails.NETWORK_READY}
+    pubSocket.send(pickle.dumps(msg))
+    print("Send Network is ready to all other Machines")
 
-        #start to send whole pids list to others machines
-        msg = {'id': MsgDetails.PID_LIST, 'PID': MyPID,'list':[MachinesPID,Machines] ,'PORT':TransferPort}
-        print("msg to send to other machines{}".format(msg))
-        pubSocket.send(pickle.dumps(msg))
-        print("pid is send")
+def RcvNetworkReady():
+    # Receive Network is Ready
+    pickle.loads(subSocket.recv())
+    print("Receive Network is ready MSG")
 
+def InitNetwork():
+    # the starting machine receive Machines IDs & IPs 
+    # then resend this list to all of them
+    if(MyID == 0):
+        RcvStartMsgs()
+        SendNetworkReady()
+        
+    # Other Machines send ther ID & IP to the starting Machine 
+    # Then Receive the Whole List from this machine 
     else:
-        #not the first machine
-        #send my pid 
-        time.sleep(2)
-        #TODO remove when test on different machines
-        msg = {'id': MsgDetails.PID_MSG, 'PID': MyPID,'ip':myIp,'PORT':TransferPort}
-        print("msg to send to other machines{}".format(msg))
-        pubSocket.send(pickle.dumps(msg))
-        print("pid is send")
-        print("before receive pid")
-        #receive pids list from machine 0
-        receievedCorrect = True
-        while(receievedCorrect):    
-            receivedMessage = pickle.loads(subSocket.recv())
-            print("after receive pid msg :{}".format(receivedMessage))
-            print(type(receivedMessage['PORT']))
-            if receivedMessage['PORT'] == 10000 :
-                receievedCorrect = False
+        SendStartMsg()
+        RcvNetworkReady()
+
+
+def ConfigPubSubSockets(IsBlocked, IsTopic, Time = 0):
+    # Setup Subscriber Port
+    ipPort = MyIP + ":" + PublishingPort
+    global subSocket, subContext, pubSocket, pubContext
+    
+    Topics = []
+    if(IsTopic):
+        # The Kind of Messages that I want only to receive
+        Topics.append("Broadcast")  # Receive General Msgs
+
+        MachinesIDs = [Machine.ID for Machine in Machines.values()]
+        MachinesIDs.sort()
+        for ID in MachinesIDs:
+            if(ID < MyID):          # Receive Election Msgs from Machines with Smaller ID
+                Topics.append(str(ID) + "LeaderElection")
+            elif(ID == MyID):  
+                # Receive OK Msgs from Machines with Greater ID     
+                Topics.append(str(MyID) + "OK") 
+                # Receive The Msg that Tell me that I amn't the Leader any more
+                Topics.append(str(MyID) + "NotLeader") 
             else:
-                receievedCorrect = True
-        MachinesPID,Machines = receivedMessage['list']
-    print(MachinesPID)
-    return MachinesPID,Machines
-        
-
-def configMachinePorts(myIp,block,subTopic):
-    ipPort = myIp + ":" + str(TransferPort)
-    print(ipPort)
-    #setup publisher communication
-    pubSocket, pubContext = configure_port(ipPort, zmq.PUB, 'bind')
-
-    #connect to all other machines by port number which is TransferPort+10000+count
-    count=0 #to Machines number - 1
-    print("iports of sub socket")
-    subcontext = zmq.Context()
-    subsocket = subcontext.socket(zmq.SUB)
-    if subTopic == True:
-        subsocket.setsockopt_string(zmq.SUBSCRIBE, str(MyPID))
-    else:
-        subsocket.setsockopt_string(zmq.SUBSCRIBE, "")
-    subsocket.setsockopt_string(zmq.SUBSCRIBE,"Broadcast")
-    if(block == True):
-        subsocket.setsockopt(zmq.RCVTIMEO, 5000)
-        subsocket.setsockopt(zmq.LINGER,      0)
-        subsocket.setsockopt(zmq.AFFINITY,    1)
-        
-    for IP in MachinesIPs:
-        #check if this port is mine
-        if not (TransferPort == (10000+count)):
-            ip_port = IP+":"+str(10000+count)
-            print("machine {} ip port: {}".format(count,ip_port))
-            subsocket.connect("tcp://" +ip_port)
-        count+=1    
-    return pubSocket,pubContext,subsocket,subcontext
-    
-
-
-
-def start_election(MachinesPID,PUBSocket,SUBSocket,myIp,p):
-    checkElection.value = 1
-    #run i'm alive process after determined the leader
-    if( p != None):
-        if(p.is_alive()):
-            p.Terminate()  # ...terminate!
-    
-    index = MachinesPID.index(MyPID)
-    print("{} of pid : {}".format(index,MyPID))
-    isleader = True
-    # if no machines in the systems except me
-    noSystem = False
-
-    #if my machine is not the first one then i will recv at most 6 msgs 3 OK and 3 ELection 
-    #if first machine then 3 ok only at most 
-    if(MyPID == MachinesPID[0]):
-        #send election at first then receive
-        time.sleep(2)
-        receivedNumber=0
-        for i in range(1,(len(MachinesPID)-index)):
-            if(index+i >= len(MachinesPID)):
                 break
-            msg = {'id': MsgDetails.ELECTION, 'msg': "election command",'PID':MyPID,'topicfilter' : MachinesPID[index+i]}
-            print("send msg: {}".format(msg))
-            #send election msg
-            PUBSocket.send_multipart([str(MachinesPID[index+i]).encode(),pickle.dumps(msg)])
-            print("before receive")
-            trueMsg = False
-            while (not trueMsg):
-                print("before receive")
-                try:
-                    [topic,rmsg] = SUBSocket.recv_multipart()
-                    receivedMessage = pickle.loads(rmsg)
-                    print("after received:{}".format(receivedMessage))
-                    if(receivedMessage['topicfilter'] == MyPID and receivedMessage['id']==MsgDetails.OK):
-                        isleader=False
-                        trueMsg = True
-                        receivedNumber+=1                    
-                except:break        
-        if(receivedNumber < 1):
-            print("no system")
-            noSystem = True        
-
-    else:
-        receivedNumber = 0
-        #not first machine
-        #receive Election at first from the lower machines
-        for i in range(index):
-            print("before receive")
-            trueMsg = False
-            while (not trueMsg):
-                try:
-                    [topic,rmsg] = SUBSocket.recv_multipart()
-                    receivedMessage = pickle.loads(rmsg)
-                    print("after received:{}".format(receivedMessage))
-                    if(receivedMessage['topicfilter'] == MyPID and receivedMessage['id'] == MsgDetails.ELECTION):
-                        msg = {'id': MsgDetails.OK, 'msg': "OK",'PID':MyPID,'topicfilter' : receivedMessage['PID']}
-                        print("send msg: {}".format(msg))
-                        trueMsg = True
-                        PUBSocket.send_multipart([str(receivedMessage['PID']).encode(),pickle.dumps(msg)])
-                        receivedNumber+=1
-                except:
-                    break
-        time.sleep(2)
         
-        for i in range(1,(len(MachinesPID)-index)):
-            if(index+i >= len(MachinesPID)):
-                break
-            msg = {'id': MsgDetails.ELECTION, 'msg': "election command",'PID':MyPID,'topicfilter' : MachinesPID[index+i]}
-            print("send msg: {}".format(msg))
-            #send election msg
-            PUBSocket.send_multipart([str(MachinesPID[index+i]).encode(),pickle.dumps(msg)])
-            print("before receive")
-            trueMsg = False
-            while (not trueMsg):
-                try:
-                    [topic,rmsg] = SUBSocket.recv_multipart()
-                    receivedMessage = pickle.loads(rmsg)
-                    print("after received:{}".format(receivedMessage))
-                    if(receivedMessage['topicfilter'] == MyPID and receivedMessage['id']==MsgDetails.OK ):
-                        isleader=False
-                        trueMsg = True
-                        receivedNumber+=1
-                    
-                except:break        
-        if(receivedNumber < 1):
-            print("no system")
-            noSystem = True
-    checkElection.value = 0
-    #if count equal 0 then this machine become the leader.
-    if(isleader == True):
-        print("Leader")
-        LeaderPID.value = MyPID
-        Machines[MyPID].isLeader=True
-        msg = {'id': MsgDetails.NEW_LEADER, 'msg': "i'm the new leader",'PID':MyPID}
-        #send msgs to other machines
-        time.sleep(2)
-        PUBSocket.send_multipart(["Broadcast".encode(),pickle.dumps(msg)])        
-        p = multiprocessing.Process(target=Alive_process,
-                                args=(MyPID,checkElection,Machines[MyPID].isLeader, MachinesIPs,ManyLeadersCheck,FakeLeaderPID,LeaderPID))
-        p.start()  # ...and run!
+    subSocket, subContext = configure_port(ipPort, zmq.SUB, 'bind', 
+                                            IsBlocked, Time, IsTopic, Topics)
+    # Connect to all other Subscribers
+    MachinesIPs = [Machine.IP for Machine in Machines.values()]
+
+    # So Remove My IP if existed
+    try:
+        MachinesIPs.remove(MyIP)
+    except:
+        pass
+
+    pubSocket, pubContext = configure_multiple_ports(MachinesIPs, PublishingPort, zmq.PUB)
+
+def StartElection():
+    # I'm A Leader unless I receive OK Msg from a Machine with Greater ID
+    IsLeader = True
+
+    # TODO: Ask How to remove that sleep
+    time.sleep(NumOfMachines - 1 - MyID)
+
+    # Send Election Msg to All Machines with Greater ID
+    ElectionMsg = {"MsgID": MsgDetails.ELECTION, "ID": MyID}
+    Topic = (str(MyID) + "LeaderElection").encode()
+    pubSocket.send_multipart([Topic ,pickle.dumps(ElectionMsg)])
+
+    try:
+        while(True):
+            Topic, receivedMessage = subSocket.recv_multipart()
+            receivedMessage = pickle.loads(receivedMessage)
+            if(receivedMessage["MsgID"] == MsgDetails.OK):
+                IsLeader = False
+            if(receivedMessage["MsgID"] == MsgDetails.ELECTION):
+                OkMsg = {"MsgID": MsgDetails.OK, "ID": MyID}
+                Topic =  (str(receivedMessage["ID"]) + "OK").encode()
+                pubSocket.send_multipart([Topic ,pickle.dumps(OkMsg)])              
+    except:
+        pass              
+
+    if(IsLeader == True):
+        # Declare Myself as a new Leader
+        LeaderIDLock.acquire()
+        LeaderID.value = MyID
+        LeaderIDLock.release()
+        Machines[MyID].IsLeader = True
+        # Tell the Other Machines that I'm The New Leader
+        LeaderMsg = {'MsgID': MsgDetails.NEW_LEADER, 'ID': MyID}
+        Topic = "Broadcast".encode()
+        pubSocket.send_multipart([Topic, pickle.dumps(LeaderMsg)]) 
     else:
-        Machines[MyPID].isLeader=False
+        # Declare Myself as a Normal Member 
+        Machines[MyID].IsLeader = False
+        # Receive The New Leader Msg
+        Topic, receivedMessage = subSocket.recv_multipart()
+        receivedMessage = pickle.loads(receivedMessage)
+        if(receivedMessage['MsgID'] == MsgDetails.NEW_LEADER):
+            LeaderIDLock.acquire()
+            LeaderID.value = receivedMessage['ID']
+            LeaderIDLock.release()
+        
+    ElectionModeLock.acquire()
+    ElectionMode.value = 0
+    ElectionModeLock.release()
 
-    
-    return isleader,noSystem
-    
 
-def Machine_process(MachinesPID,Machines,MachinesIPs,myIp):
-    PUB_socket,pubContext,sub_socket,subcontext=configMachinePorts(myIp,False,False)#with blocking not topic filter
-    MachinesPID,Machines = send_get_PIDs(myIp,Machines,MachinesPID,PUB_socket,sub_socket)
+def Machine_process():
+    ################### Wait For All Machines to be Ready for Election ###############
+    if(MyID == 0):
+        InitMachines()
+    else:
+        Machines[0] = Machine(StartingMachineIP, 0)
+
+    ConfigPubSubSockets(IsBlocked = False, IsTopic = False)
+    InitNetwork()
+
+    if(MyID != 0):
+        InitMachines()
+
     # Terminate Connection
-    sub_socket.close()
-    subcontext.destroy()
-    PUB_socket.close()
+    subSocket.close()
+    pubSocket.close()
+    subContext.destroy()
     pubContext.destroy()
     
-    PUB_socket,pubContext,sub_socket,subcontext=configMachinePorts(myIp,True,True)#with no blocking with topic filter on my pid
-    MachinesPID.sort(reverse=False)
-    print(MachinesPID)
-    print("\n\n")
-    p = None
-    noSystem = False
-    isleader,noSystem = start_election(MachinesPID,PUB_socket,sub_socket,myIp,p)
-    
-    
-    while(not noSystem):
-        noSystem = False
-        #msgs received from machine and its behaviour
-        print("in machine process super loop new leader:check election:{} checkMany leaders :{}".format(checkElection.value,ManyLeadersCheck.value))
-        if(ManyLeadersCheck.value == 1 and checkElection.value == 1):
-                msg = {'id': MsgDetails.NOT_LEADER, 'msg': "no longer leader",'PID': FakeLeaderPID.value}
-                print(msg)
-                # not the same socket to send to another sub sockets except alive sub socket
-                p.terminate()
-                PUB_socket.send_multipart([str(receivedMessage['PID']).encode(),pickle.dumps(msg)])
+    ################### Start Election at the Beginning to choose the leader ###############
+    ConfigPubSubSockets(IsBlocked = True, IsTopic = True, Time = 5000)
+    StartElection()
+
+    # Open Alive Process To Start The Hearebeat in the System
+    AliveProcess = multiprocessing.Process(target = Alive_process,
+                   args = (MyID, MyIP, ElectionMode, ElectionModeLock, 
+                           Machines[MyID].IsLeader, ManyLeadersMode, 
+                           ManyLeadersModeLock, FakeLeaderID, FakeLeaderLock,  
+                           LeaderID, LeaderIDLock ))
+    AliveProcess.start()  # ...and run!
+
+    # End The TimeOut and make Receive Blocked
+    subSocket.setsockopt(zmq.RCVTIMEO,  500)
+    try:
+        while(True):
+            Topic, receivedMessage = subSocket.recv_multipart()
+            receivedMessage = pickle.loads(receivedMessage)
+
+            if(receivedMessage['MsgID'] == MsgDetails.START_ELECITION):
+                ElectionModeLock.acquire()
+                ElectionMode.value = 1
+                ElectionModeLock.release()
+                StartElection()
+
+            elif(receivedMessage['MsgID'] == MsgDetails.NOT_LEADER):
+                Machines[MyID].IsLeader = False
+                LeaderIDLock.acquire()
+                LeaderID.value = receivedMessage['LeaderID']
+                LeaderIDLock.release()
+    except:
+        # No Alive Msg is received from leader 
+        # Then send Msg to all Machines to start new election
+        if(ElectionMode.value == 1):
+                StartElectionMsg = {'MsgID': MsgDetails.START_ELECITION }
+                Topic = "Broadcast".encode()
+                pubSocket.send_multipart([Topic, pickle.dumps(StartElectionMsg)])
+                StartElection()
                 
-        elif(checkElection.value == 1):
-                #no alive msg received from leader then send msg to all machines to start new election
-                msg = {'id': MsgDetails.START_ELECITION, 'msg': "start election command"}
-                print(msg)
-                # not the same socket to send to another sub sockets except alive sub socket
-                p.terminate()
-                PUB_socket.send_multipart(["Broadcast".encode(),pickle.dumps(msg)])
-        time.sleep(2)
-        
-
-        try:
-
-            #sub_socket.setsockopt(zmq.RCVTIMEO,  300)
-            print("before recv")
-            [topic,rmsg] = sub_socket.recv_multipart()
-            receivedMessage = pickle.loads(rmsg)
-            print("msg recv:",receivedMessage)
-
-            if(receivedMessage['id'] == MsgDetails.START_ELECITION):
-                #wait second then start to send election msgs to elect new leader
+        # The Old Leader is now Alive again, tell him that 
+        # He isn't the Leader anymore
+        elif(ManyLeadersMode.value == 1):
+                NotLeaderMsg = {'MsgID': MsgDetails.NOT_LEADER, 'LeaderID': LeaderID.value}
+                Topic = str(FakeLeaderID).encode()
+                pubSocket.send_multipart([Topic ,pickle.dumps(NotLeaderMsg)])
+                ManyLeadersModeLock.acquire()
+                ManyLeadersMode.value = 0
+                ManyLeadersModeLock.release()
                 
-                time.sleep(2)
-                isleader , noSystem= start_election(MachinesPID,PUB_socket,sub_socket,myIp,p)
-
-            elif(receivedMessage['id'] == MsgDetails.NEW_LEADER or receivedMessage['id'] == MsgDetails.NOT_LEADER):
-                #new leader is elected to the system 
-                #OR
-                #not leader msg to indicate the machine that it is no longer the leader of the system.
-                print("in new leader")
-                if(p != None):
-                    if(p.is_alive()):
-                        p.terminate()
-                #if the machine was leader and wake up again then it make it self as member
-                Machines[MyPID].isLeader=False
-                #set the leader PID
-                LeaderPID.value = receivedMessage['PID']
-                checkElection.value = 0
-                p = multiprocessing.Process(target=Alive_process,
-                                args=(MyPID,checkElection,Machines[MyPID].isLeader, MachinesIPs,ManyLeadersCheck,FakeLeaderPID,LeaderPID))
-                p.start()  # ...and run!
-                print("after start process alive")
-                        
-        except:
-            pass          
-            
-        
-Machine_process(MachinesPID,Machines,MachinesIPs,MyIP)
+Machine_process()
