@@ -57,13 +57,14 @@ def Alive_process(MyID, MyIP, ElectionMode,
                         # If It isn't the Leader that I Know
                         # [It may be Fake Leader or I don't know the Real Leader]
                         if(SenderID != LeaderID.value and MyID != 0):
+                            print("There is Leader Ambiguity")
                             SharedLock.acquire()
                             LeaderAmbiguityMode.value = 1
                             SharedLock.release()
                 except:
                     # If the leader doesn't send I'm Alive Message
                     # Start Election
-                    print("I Started Election From Here")
+                    print("Leader isn't Alive, I'll ask for Election")
                     SharedLock.acquire()
                     ElectionMode.value = 1
                     SharedLock.release()

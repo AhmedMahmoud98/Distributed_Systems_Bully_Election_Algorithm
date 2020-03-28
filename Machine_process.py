@@ -14,7 +14,7 @@ from dateutil.relativedelta import relativedelta
 
 MyID = int(sys.argv[1]) 
 #MyIP = get_ip()
-MyIP = sys.argv[2] #TODO: it will be removed and uncomment the above line (Testing)
+MyIP = sys.argv[2] 
 
 # Key is Machine ID and value is Machine object
 Machines = {}
@@ -24,6 +24,7 @@ PubContext = None
 SubSocket = None
 SubContext = None
 
+# Lock used for processes synchronization
 SharedLock = Lock()
 
 # Stop the Heartbeat if the Network in Election state
@@ -90,22 +91,15 @@ def InitNetwork():
         SendStartMsg()
         RcvNetworkReady()
 
-
-def ConfigPubSubSockets():
-    global SubSocket, SubContext, PubSocket, PubContext
-   
-    # Setup Subscriber Port
-    ipPort = MyIP + ":" + PublishingPort
-
+def MsgsTopics():
     Topics = []
     # The Kind of Messages that I want only to receive
     Topics.append("Broadcast")  # Receive General Msgs
+
     if(MyID == 0):
         Topics.append("LeaderAmbiguity")
         Topics.append("StartConnection")
 
-    MachinesIDs = [Machine.ID for Machine in Machines.values()]
-    MachinesIDs.sort()
     for ID in MachinesIDs:
         if(ID < MyID):          # Receive Election Msgs from Machines with Smaller ID
             Topics.append(str(ID) + "LeaderElection")
@@ -116,24 +110,23 @@ def ConfigPubSubSockets():
             Topics.append(str(MyID) + "NotLeader") 
             # Receive Msg To Pause My Machine (For Testing)
             Topics.append(str(MyID) + "Pause")
-        else:
-            break
-        
+    return Topics
+
+def ConfigPubSubSockets():
+    global SubSocket, SubContext, PubSocket, PubContext
+   
+    # Setup Subscriber Port
+    ipPort = MyIP + ":" + SubscribePort
+    Topics = MsgsTopics()
     SubSocket, SubContext = configure_port(ipPort, zmq.SUB, 'bind', 
                                             True, -1, True, Topics)
     # Connect to all other Subscribers
-    MachinesIPs = [Machine.IP for Machine in Machines.values()]
-
-    # So Remove My IP if existed
-    try:
-        MachinesIPs.remove(MyIP)
-    except:
-        pass
-
-    PubSocket, PubContext = configure_multiple_ports(MachinesIPs, PublishingPort, zmq.PUB)
+    MachinesIPsTemp = MachinesIPs.copy()
+    MachinesIPsTemp.remove(MyIP)
+    PubSocket, PubContext = configure_multiple_ports(MachinesIPsTemp, SubscribePort, zmq.PUB)
 
 def StartElection():
-    # Announce Election Mode
+    # Start Election Mode
     SharedLock.acquire()
     ElectionMode.value = 1
     SharedLock.release()
@@ -141,7 +134,7 @@ def StartElection():
     # I'm A Leader unless I receive OK Msg from a Machine with Greater ID
     IsLeader = True
 
-    # TODO: Ask How to remove that sleep
+    # Sleep To Synchronize Election Process
     time.sleep((NumOfMachines - 1 - MyID) * 0.01)
 
     # Send Election Msg to All Machines with Greater ID
@@ -151,7 +144,8 @@ def StartElection():
 
     try:
         while(True):
-            setTimeOut(SubSocket, 500)
+            # Receive Two Types of Messages
+            setTimeOut(SubSocket, 1000)
             Topic, receivedMessage = SubSocket.recv_multipart()
             receivedMessage = pickle.loads(receivedMessage)
 
@@ -170,7 +164,8 @@ def StartElection():
     except:
         pass              
 
-    if(IsLeader == True):
+    # Check If I'm Leader or Not After Election
+    if(IsLeader):
         # Declare Myself as a new Leader
         SharedLock.acquire()
         LeaderID.value = MyID
@@ -190,6 +185,7 @@ def StartElection():
             LeaderID.value = receivedMessage['ID']
             SharedLock.release()
         
+    # Exit Election Mode
     SharedLock.acquire()
     ElectionMode.value = 0
     SharedLock.release()
@@ -212,7 +208,7 @@ def Machine_process():
                            PauseMode, LeaderID, SharedLock ))
     AliveProcess.start()  # ...and run!
 
-    # End The TimeOut and make Receive Blocked
+    # Enter the main Loop
     while(True):
         receivedMessage = None
         try:
@@ -224,9 +220,7 @@ def Machine_process():
                 # No Machine Send I'm Alive Msg, Let's Start Election
                 if(receivedMessage['MsgID'] == MsgDetails.START_ELECITION):
                     print("I was invited to Election")
-                    print("PauseMode Value",PauseMode.value )
-                    if(PauseMode.value == 0):
-                        StartElection()
+                    StartElection()
                     print("New Leader Is " , LeaderID.value)
 
                 # Machine 0 Send Me The Real Leader ID as 
@@ -242,17 +236,16 @@ def Machine_process():
 
                 # Pause Msg (For Testing)
                 elif(receivedMessage['MsgID'] == MsgDetails.PAUSE):
-                    print("I Will be Paused for 15s")
-                    # Declare Pause Mode to stop Heartbeating 
+                    print("I Will be Paused")
+                    # Start Pause Mode to stop Heartbeating 
                     SharedLock.acquire()
                     PauseMode.value = 1
                     SharedLock.release()
-
-                    # Sleep for 15 Seconds, Throw All received Msgs
+                    # Sleep for some Seconds
+                    # Unsubscribe to messages at this period
                     SubSocket.unsubscribe("Broadcast")
                     time.sleep(30)
                     SubSocket.subscribe("Broadcast")
-
                     # End Pause Mode 
                     SharedLock.acquire()
                     PauseMode.value = 0
@@ -276,15 +269,16 @@ def Machine_process():
             # No Alive Msg is received from leader 
             # Then send Msg to all Machines to start new election
             if(ElectionMode.value == 1):
+                print("I Started Election")
                 StartElectionMsg = {'MsgID': MsgDetails.START_ELECITION }
                 Topic = "Broadcast".encode()
                 PubSocket.send_multipart([Topic, pickle.dumps(StartElectionMsg)])
-                print("I Started Election")
                 StartElection()
                 print("New Leader Is " , LeaderID.value)
                     
             # A Machine Receive a Msg From a another Machine 
             # which id differnt from The Leader It thought
+            # This Msg is Sent To Machine 0 Only
             elif(LeaderAmbiguityMode.value == 1):
                 LeaderAmbiguityMsg = {'MsgID': MsgDetails.LEADER_AMBIGUITY }
                 Topic = "LeaderAmbiguity".encode()

@@ -5,7 +5,7 @@ import socket
 import pickle
 import os 
 from contextlib import closing
-# Functions
+
 def configure_port(ipPort, portType, connectionType, openTimeOut = False, 
                     Time = 0, subTopic = False, Topics = []):
     context = zmq.Context()
@@ -54,38 +54,23 @@ def get_ip():
         s.connect(("8.8.8.8", 80))
         return s.getsockname()[0]
 
-def get_PID():
-    return os.getpid() 
+
 class MsgDetails(enum.Enum):
     LEADER_MEMBER_ALIVE = 1
-    START_ELECITION = 2
-    ELECTION = 3
-    OK = 4
-    START_MSG = 5
+    LEADER_AMBIGUITY = 2
+    START_ELECITION = 3
+    NETWORK_READY = 4
+    REAL_LEADER = 5
     NEW_LEADER = 6
-    REAL_LEADER = 7
-    LEADER_AMBIGUITY = 8
-    NETWORK_READY = 9
-    PAUSE = 10
-
-class Unbuffered(object):
-   def __init__(self, stream):
-       self.stream = stream
-   def write(self, data):
-       self.stream.write(data)
-       self.stream.flush()
-   def writelines(self, datas):
-       self.stream.writelines(datas)
-       self.stream.flush()
-   def __getattr__(self, attr):
-       return getattr(self.stream, attr)
-
+    START_MSG = 7
+    ELECTION = 8
+    PAUSE = 9
+    OK = 10
 
 # Constants #
 NumOfMachines = 4
-PublishingPort = "10000"
+SubscribePort = "10000"
 AlivePort = "20000"
-StartingMachineIP = "192.168.1.5"
 MachinesIPs = ["192.168.1.13", "192.168.1.14", "192.168.1.15", "192.168.1.16"]
 MachinesIDs = [ID for ID in range(NumOfMachines)]
 
