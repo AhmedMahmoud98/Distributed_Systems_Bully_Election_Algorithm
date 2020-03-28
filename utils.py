@@ -61,24 +61,31 @@ class MsgDetails(enum.Enum):
     START_ELECITION = 2
     ELECTION = 3
     OK = 4
-    NOT_LEADER = 5 #msg from members to leader to inform 
-    #him that new leader was elected #TODO at i'm alive process.
-    START_MSG = 6
-    IPs_LIST = 7
-    NEW_LEADER = 8
-    REAL_LEADER = 9
-    LEADER_AMBIGUITY = 10
-    NETWORK_READY = 11
-    PAUSE = 12
-    DUMMY = 13
+    START_MSG = 5
+    NEW_LEADER = 6
+    REAL_LEADER = 7
+    LEADER_AMBIGUITY = 8
+    NETWORK_READY = 9
+    PAUSE = 10
+
+class Unbuffered(object):
+   def __init__(self, stream):
+       self.stream = stream
+   def write(self, data):
+       self.stream.write(data)
+       self.stream.flush()
+   def writelines(self, datas):
+       self.stream.writelines(datas)
+       self.stream.flush()
+   def __getattr__(self, attr):
+       return getattr(self.stream, attr)
 
 
 # Constants #
 NumOfMachines = 4
 PublishingPort = "10000"
 AlivePort = "20000"
-StartingMachineIP = "192.168.1.9"
-MachinesIPs = ["192.168.1.9", "192.168.1.10", "192.168.1.11", "192.168.1.12"]
+StartingMachineIP = "192.168.1.5"
+MachinesIPs = ["192.168.1.13", "192.168.1.14", "192.168.1.15", "192.168.1.16"]
 MachinesIDs = [ID for ID in range(NumOfMachines)]
-
 

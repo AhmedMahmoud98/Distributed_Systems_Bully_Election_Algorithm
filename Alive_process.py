@@ -4,59 +4,68 @@ from datetime import datetime
 from dateutil.relativedelta import relativedelta
 from utils import *
 
-
-subSocket = None
-subContext = None
-pubSocket = None
-pubContext = None
+SubSocket = None
+SubContext = None
+PubSocket = None
+PubContext = None
 
 def ConfigureConnection(MyIP):
-    global subSocket, subContext, pubSocket, pubContext
+    global SubSocket, SubContext, PubSocket, PubContext
     # Start new Connection as a Normal Member
     # Configure Myself as a Subscriber
     ipPort = MyIP + ":" + AlivePort
-    subSocket, subContext = configure_port(ipPort, zmq.SUB, 'bind',
-            openTimeOut = True, Time = 6000)
+    SubSocket, SubContext = configure_port(ipPort, zmq.SUB, 'bind',
+                               openTimeOut = True, Time = 6000)
     
     # Start new Connection as a Leader
     # Connect to all other Subscribers
     MachinesIPsTemp = MachinesIPs.copy()
     MachinesIPsTemp.remove(MyIP)
-    pubSocket, pubContext = configure_multiple_ports(MachinesIPsTemp, 
+    PubSocket, PubContext = configure_multiple_ports(MachinesIPsTemp, 
                                                     AlivePort, zmq.PUB)
 
-def Alive_process(MyID, MyIP, ElectionMode, ElectionModeLock, 
-                  LeaderAmbiguityMode, LeaderAmbiguityModeLock,
-                  PauseMode, PauseModeLock, 
-                  LeaderID, LeaderIDLock):
+def Alive_process(MyID, MyIP, ElectionMode,  
+                  LeaderAmbiguityMode, PauseMode, 
+                  LeaderID, SharedLock):
     
+    global SubSocket, SubContext, PubSocket, PubContext
+
+    # Initialize the Heartbeat Publisher and Subscriber Ports
     ConfigureConnection(MyIP)
-    global subSocket, subContext, pubSocket, pubContext
+    
     while (True):
+        # Stop the Heartbeat if It was in Election or Pause Mode
         if(ElectionMode.value == 0 and PauseMode.value == 0):
             # Leader send periodically I'm Alive Msg to others Machines
             if(LeaderID.value == MyID):
                 # I'm Alive Msg that will be sent periodically
                 AliveMsg = {'MsgID': MsgDetails.LEADER_MEMBER_ALIVE, 'ID':MyID}
-                pubSocket.send(pickle.dumps(AliveMsg))
+                PubSocket.send(pickle.dumps(AliveMsg))
                 print("I'M Leader And I Sent I'm Alive, My ID is ", MyID)
                 # Periodically 1 sec
                 time.sleep(1)
 
             else:
                 try:
-                    setTimeOut(subSocket, 6000)
-                    receivedMessage = pickle.loads(subSocket.recv())
+                    # Receive Leader I'm Alive Message
+                    setTimeOut(SubSocket, 8000)
+                    receivedMessage = pickle.loads(SubSocket.recv())
                     print("Leader Is Alive and Its ID is " , receivedMessage["ID"])
+
                     if(receivedMessage["MsgID"] == MsgDetails.LEADER_MEMBER_ALIVE):
                         SenderID = receivedMessage["ID"]
+                        # If It isn't the Leader that I Know
+                        # [It may be Fake Leader or I don't know the Real Leader]
                         if(SenderID != LeaderID.value and MyID != 0):
-                            LeaderAmbiguityModeLock.acquire()
+                            SharedLock.acquire()
                             LeaderAmbiguityMode.value = 1
-                            LeaderAmbiguityModeLock.release()
+                            SharedLock.release()
                 except:
-                    ElectionModeLock.acquire()
+                    # If the leader doesn't send I'm Alive Message
+                    # Start Election
+                    print("I Started Election From Here")
+                    SharedLock.acquire()
                     ElectionMode.value = 1
-                    ElectionModeLock.release()
+                    SharedLock.release()
 
 
